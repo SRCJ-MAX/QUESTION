@@ -83,16 +83,22 @@ async function ensureBundledBank(): Promise<void> {
   const banks = await getBanks();
   if (banks.length > 0) return;
 
+  await importBundledBank();
+}
+
+async function importBundledBank(): Promise<boolean> {
   try {
     const response = await fetch(`${import.meta.env.BASE_URL}data/question-bank.json`);
-    if (!response.ok) return;
+    if (!response.ok) return false;
     const blob = await response.blob();
     const file = new File([blob], "question-bank.json", { type: "application/json" });
     const result = await parseQuestionBank(file);
     await addBank(result.bank, result.questions);
     showToast(`已自动导入内置题库：${result.questions.length} 道题。`);
+    return true;
   } catch {
     // 内置题库导入失败时保持空状态，用户仍可手动导入自己的题库。
+    return false;
   }
 }
 
@@ -294,6 +300,7 @@ async function renderHome(): Promise<void> {
           ? `<button class="primary-button" data-action="resume">继续上次学习 ${lastSession.index + 1}/${lastSession.questionIds.length}</button>`
           : `<button class="primary-button" data-action="start-sequential">开始刷题</button>`
       }
+      ${questions.length === 0 ? `<button class="secondary-button" data-action="import-bundled" style="margin-top:10px">重新导入内置题库</button>` : ""}
     </section>
 
     <div class="action-grid">
@@ -748,6 +755,11 @@ async function handleClick(event: MouseEvent): Promise<void> {
   if (action === "start-favorite") startSession("favorite");
   if (action === "start-essay") startSession("essay");
   if (action === "import-bank") importBank();
+  if (action === "import-bundled") {
+    const ok = await importBundledBank();
+    showToast(ok ? "内置题库已导入。" : "内置题库加载失败，请刷新后重试。");
+    render();
+  }
   if (action === "export-all") exportAll(false);
   if (action === "export-banks") exportAll(true);
   if (action === "restore-backup") restoreBackup();
