@@ -87,12 +87,56 @@ async function ensureBundledBank(): Promise<void> {
 }
 
 async function importBundledBank(): Promise<boolean> {
+  const candidates = Array.from(
+    new Set([
+      `${import.meta.env.BASE_URL}data/question-bank.json`,
+      "./data/question-bank.json",
+      "/QUESTION/data/question-bank.json",
+      `${window.location.origin}/QUESTION/data/question-bank.json`
+    ])
+  );
+
   try {
-    const response = await fetch(`${import.meta.env.BASE_URL}data/question-bank.json`);
-    if (!response.ok) return false;
-    const blob = await response.blob();
-    const file = new File([blob], "question-bank.json", { type: "application/json" });
-    const result = await parseQuestionBank(file);
+    let payload: { title?: string; questions?: Array<Partial<Question>> } | null = null;
+
+    for (const url of candidates) {
+      const response = await fetch(`${url}${url.includes("?") ? "&" : "?"}t=${Date.now()}`, { cache: "no-store" });
+      if (response.ok) {
+        payload = await response.json();
+        break;
+      }
+    }
+
+    if (!payload?.questions?.length) return false;
+
+    const bankId = uid("bank");
+    const now = new Date().toISOString();
+    const questions: Question[] = payload.questions
+      .filter((question) => question.question && question.type)
+      .map((question, index) => ({
+        id: uid(`q${index}`),
+        bankId,
+        type: question.type as QuestionType,
+        question: String(question.question ?? ""),
+        options: Array.isArray(question.options) ? question.options.map(String) : [],
+        answer: Array.isArray(question.answer) ? question.answer.map(String) : question.answer ? [String(question.answer)] : [],
+        analysis: String(question.analysis ?? ""),
+        chapter: String(question.chapter ?? "未分类"),
+        createdAt: now
+      }));
+
+    if (questions.length === 0) return false;
+
+    const result = {
+      bank: {
+        id: bankId,
+        title: payload.title || "习题转换题库",
+        count: questions.length,
+        createdAt: now
+      },
+      questions
+    };
+
     await addBank(result.bank, result.questions);
     showToast(`已自动导入内置题库：${result.questions.length} 道题。`);
     return true;
