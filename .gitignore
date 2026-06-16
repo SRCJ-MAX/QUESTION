@@ -3,5 +3,6 @@ dist/
 .codex-vite*.log
 .pnpm-store/
 .codex-imports/
+.codex-tools/
 __pycache__/
 *.pyc
