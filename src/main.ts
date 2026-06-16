@@ -34,6 +34,7 @@ let toastTimer = 0;
 let draft: DraftAnswer | null = null;
 let questionStartedAt = Date.now();
 let wrongTypeFilter: QuestionType | "all" = "all";
+let bundledBankChecked = false;
 
 const typeLabel: Record<QuestionType, string> = {
   single: "单选题",
@@ -73,6 +74,26 @@ function showToast(message: string): void {
 function applyTheme(state: AppState): void {
   const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
   document.documentElement.classList.toggle("dark", state.theme === "dark" || (state.theme === "system" && prefersDark));
+}
+
+async function ensureBundledBank(): Promise<void> {
+  if (bundledBankChecked) return;
+  bundledBankChecked = true;
+
+  const banks = await getBanks();
+  if (banks.length > 0) return;
+
+  try {
+    const response = await fetch(`${import.meta.env.BASE_URL}data/question-bank.json`);
+    if (!response.ok) return;
+    const blob = await response.blob();
+    const file = new File([blob], "question-bank.json", { type: "application/json" });
+    const result = await parseQuestionBank(file);
+    await addBank(result.bank, result.questions);
+    showToast(`已自动导入内置题库：${result.questions.length} 道题。`);
+  } catch {
+    // 内置题库导入失败时保持空状态，用户仍可手动导入自己的题库。
+  }
 }
 
 function shell(content: string): string {
@@ -245,6 +266,7 @@ async function markMastered(questionId: string): Promise<void> {
 }
 
 async function renderHome(): Promise<void> {
+  await ensureBundledBank();
   const [state, banks, questions, attempts] = await Promise.all([getState(), getBanks(), getQuestions(), getAttempts()]);
   applyTheme(state);
   const todayCount = attempts.filter((attempt) => attempt.createdAt.slice(0, 10) === dateKey()).length;
