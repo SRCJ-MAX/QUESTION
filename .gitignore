@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.codex-vite*.log
+.pnpm-store/
+.codex-imports/
+__pycache__/
+*.pyc

@@ -1,0 +1,20 @@
+{
+  "name": "iphone-question-pwa",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "papaparse": "^5.5.3",
+    "read-excel-file": "^5.8.8"
+  },
+  "devDependencies": {
+    "@types/papaparse": "^5.3.16",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
+  }
+}

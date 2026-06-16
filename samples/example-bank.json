@@ -1,0 +1,35 @@
+{
+  "title": "示例题库",
+  "questions": [
+    {
+      "type": "single",
+      "question": "中国的首都是？",
+      "options": ["上海", "北京", "广州", "深圳"],
+      "answer": ["北京"],
+      "analysis": "北京是中国首都。",
+      "chapter": "常识"
+    },
+    {
+      "type": "multiple",
+      "question": "以下哪些属于中国传统节日？",
+      "options": ["春节", "中秋节", "圣诞节", "端午节"],
+      "answer": ["春节", "中秋节", "端午节"],
+      "analysis": "春节、中秋节、端午节属于中国传统节日。",
+      "chapter": "常识"
+    },
+    {
+      "type": "judge",
+      "question": "长江是中国第一长河。",
+      "answer": ["正确"],
+      "analysis": "长江是中国长度最长的河流。",
+      "chapter": "地理"
+    },
+    {
+      "type": "essay",
+      "question": "简述社会主义核心价值观的主要内容。",
+      "answer": "富强、民主、文明、和谐，自由、平等、公正、法治，爱国、敬业、诚信、友善。",
+      "analysis": "答题时应按照国家、社会、公民三个层面进行阐述。",
+      "chapter": "思政"
+    }
+  ]
+}
