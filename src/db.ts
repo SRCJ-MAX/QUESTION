@@ -1,6 +1,11 @@
 import type { AppState, Attempt, Question, QuestionBank } from "./types";
 
-const DB_NAME = "iphone-question-pwa";
+const profile =
+  typeof window !== "undefined" &&
+  (window.location.pathname.includes("/girlfriend/") || new URLSearchParams(window.location.search).get("profile") === "girlfriend")
+    ? "girlfriend"
+    : "default";
+const DB_NAME = profile === "girlfriend" ? "iphone-question-pwa-girlfriend" : "iphone-question-pwa";
 const DB_VERSION = 1;
 const STATE_KEY = "app-state";
 

@@ -43,6 +43,10 @@ const typeLabel: Record<QuestionType, string> = {
   essay: "解答题"
 };
 
+function isGirlfriendProfile(): boolean {
+  return window.location.pathname.includes("/girlfriend/") || new URLSearchParams(window.location.search).get("profile") === "girlfriend";
+}
+
 function escapeHtml(value: unknown): string {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -326,7 +330,7 @@ async function renderHome(): Promise<void> {
   app.innerHTML = shell(`
     <div class="topbar">
       <div class="brand">
-        <h1>刷题本</h1>
+        <h1>${isGirlfriendProfile() ? "专属刷题本" : "刷题本"}</h1>
         <p>${banks.length ? `${banks.length} 个题库，${questions.length} 道题` : "导入题库后即可离线刷题"}</p>
       </div>
       <button class="icon-button" data-action="theme" aria-label="切换深浅色">${document.documentElement.classList.contains("dark") ? "☀" : "☾"}</button>

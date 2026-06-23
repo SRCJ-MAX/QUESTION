@@ -1,4 +1,4 @@
-const CACHE_NAME = "question-pwa-v3";
+const CACHE_NAME = self.registration.scope.includes("/girlfriend/") ? "question-pwa-girlfriend-v1" : "question-pwa-v4";
 const APP_SHELL = [
   "./",
   "./index.html",

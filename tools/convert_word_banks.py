@@ -30,6 +30,7 @@ class ParsedQuestion:
 
 def clean_text(value: str) -> str:
     value = html.unescape(value).replace("\xa0", " ")
+    value = value.translate(str.maketrans({"Ａ": "A", "Ｂ": "B", "Ｃ": "C", "Ｄ": "D", "Ｅ": "E", "Ｆ": "F"}))
     value = re.sub(r"\s+", " ", value)
     return value.strip()
 
@@ -191,16 +192,43 @@ def parse_choice_section(lines: list[str], qtype: str, chapter: str, answer_map:
     current_number = 0
     current_question = ""
     current_options: list[str] = []
+    current_answer: list[str] = []
+
+    def extract_inline_answer(question: str) -> tuple[str, list[str]]:
+        match = re.search(r"[（(]\s*([A-Fa-f](?:[\s\.、，]*[A-Fa-f]){0,5})\s*[）)]", question)
+        if not match:
+            return question, []
+        answer = re.findall(r"[A-Fa-f]", match.group(1).upper())
+        cleaned = (question[: match.start()] + "（ ）" + question[match.end() :]).strip()
+        return clean_text(cleaned), answer
 
     def finish() -> None:
-        nonlocal current_number, current_question, current_options
+        nonlocal current_number, current_question, current_options, current_answer
         if current_question and current_options:
+            answer = answer_map.get(current_number, current_answer)
+            if not answer:
+                option_answer_match = re.search(r"解析[:：]\s*选\s*([A-Fa-f]{1,6})", " ".join(current_options))
+                if option_answer_match:
+                    answer = list(option_answer_match.group(1).upper())
+                    current_options = [re.sub(r"\s*解析[:：]\s*选\s*[A-Fa-f]{1,6}\s*", "", option).strip() for option in current_options]
+            if not answer:
+                suffix_answer_match = re.search(r"[:：]\s*([A-Fa-f]{1,6})$", current_question)
+                if suffix_answer_match:
+                    answer = list(suffix_answer_match.group(1).upper())
+                    current_question = clean_text(current_question[: suffix_answer_match.start()])
+            if not answer and current_options:
+                leading_answer_match = re.match(r"^([A-Fa-f](?:[\s\.、，]*[A-Fa-f]){0,5})\s*[）)]\s*(.*)$", current_options[0])
+                if leading_answer_match:
+                    answer = re.findall(r"[A-Fa-f]", leading_answer_match.group(1).upper())
+                    rest = clean_text(leading_answer_match.group(2))
+                    current_options = ([rest] if rest else []) + current_options[1:]
+            inferred_type = "multiple" if len(answer) > 1 else qtype
             questions.append(
                 ParsedQuestion(
-                    type=qtype,
+                    type=inferred_type,
                     question=current_question,
                     options=current_options,
-                    answer=answer_map.get(current_number, []),
+                    answer=answer,
                     analysis="",
                     chapter=chapter,
                 )
@@ -208,6 +236,7 @@ def parse_choice_section(lines: list[str], qtype: str, chapter: str, answer_map:
         current_number = 0
         current_question = ""
         current_options = []
+        current_answer = []
 
     for line in lines:
         if line.startswith("参考答案"):
@@ -218,19 +247,27 @@ def parse_choice_section(lines: list[str], qtype: str, chapter: str, answer_map:
         if number_match:
             finish()
             current_number = int(number_match.group(1))
-            current_question = clean_text(number_match.group(2))
+            current_question, current_answer = extract_inline_answer(clean_text(number_match.group(2)))
             current_options = []
         elif option_match and current_question:
             option_text = clean_text(option_match.group(2))
             current_options.append(option_text or option_match.group(1).upper())
+        elif current_question and (line.startswith(("解析", "答案")) or "解析：选" in line or "解析:选" in line):
+            answer_match = re.search(r"选\s*([A-Fa-f]{1,6})", line)
+            if not answer_match:
+                answer_match = re.search(r"答案[:：]?\s*([A-Fa-f]{1,6})", line)
+            if answer_match:
+                current_answer = list(answer_match.group(1).upper())
+        elif current_question and current_answer and not current_options:
+            current_options.append(line)
         elif current_question and len(current_options) < 2:
-            current_question = clean_text(current_question + line)
+            current_question, current_answer = extract_inline_answer(clean_text(current_question + line))
         elif current_question and len(current_options) >= 2 and not option_match:
             # A few files lose the question number; after four options this is a new question.
             if len(current_options) >= 4:
                 finish()
                 current_number = len(questions) + 1
-                current_question = line
+                current_question, current_answer = extract_inline_answer(line)
             else:
                 current_options[-1] = clean_text(current_options[-1] + line)
     finish()
@@ -253,8 +290,8 @@ def collect_answer_lines(lines: list[str], start: int, end: int) -> list[str]:
 def parse_standard_document(lines: list[str], chapter: str) -> list[ParsedQuestion]:
     questions: list[ParsedQuestion] = []
 
-    single_bounds = section_bounds(lines, ["单选题"], ["多选题", "判断题", "简答题", "二、简答题"])
-    multi_bounds = section_bounds(lines, ["多选题"], ["判断题", "简答题", "二、简答题"])
+    single_bounds = section_bounds(lines, ["单选题"], ["多选题", "多项选择题", "判断题", "简答题", "论述题", "二、简答题", "三、论述题"])
+    multi_bounds = section_bounds(lines, ["多选题", "多项选择题"], ["判断题", "简答题", "论述题", "二、简答题", "三、论述题"])
 
     if single_bounds:
         start, end = single_bounds
@@ -265,6 +302,13 @@ def parse_standard_document(lines: list[str], chapter: str) -> list[ParsedQuesti
         start, end = multi_bounds
         answers = parse_answer_map(collect_answer_lines(lines, start, end))
         questions.extend(parse_choice_section(lines[start:end], "multiple", chapter, answers))
+
+    if not single_bounds and not multi_bounds:
+        choice_bounds = section_bounds(lines, ["选择题"], ["判断题", "简答题", "论述题", "二、简答题", "二、判断题", "三、论述题"])
+        if choice_bounds:
+            start, end = choice_bounds
+            answers = parse_answer_map(collect_answer_lines(lines, start, end), single_mode=True)
+            questions.extend(parse_choice_section(lines[start:end], "single", chapter, answers))
 
     essay_start = next((i for i, line in enumerate(lines) if "简答题" in line or "思考题" in line), -1)
     if essay_start >= 0:
@@ -362,6 +406,8 @@ def main() -> None:
         parsed = parse_file(path)
         report.append({"file": str(path), "count": len(parsed)})
         for item in parsed:
+            if item.type != "essay" and (not item.answer or len(item.options) < 2):
+                continue
             all_questions.append(
                 {
                     "id": make_id(len(all_questions) + 1),
