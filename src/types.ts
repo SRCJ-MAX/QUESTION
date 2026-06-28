@@ -37,6 +37,7 @@ export interface PracticeSession {
   questionIds: string[];
   index: number;
   bankId?: string;
+  chapter?: string;
   startedAt: string;
 }
 

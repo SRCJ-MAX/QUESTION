@@ -19,7 +19,7 @@ import type { AppState, Attempt, PracticeSession, Question, QuestionType } from 
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
-type Route = "home" | "import" | "practice" | "wrong" | "favorite" | "stats" | "essay";
+type Route = "home" | "import" | "practice" | "wrong" | "favorite" | "stats" | "essay" | "bank";
 
 interface DraftAnswer {
   questionId: string;
@@ -34,6 +34,8 @@ let toastTimer = 0;
 let draft: DraftAnswer | null = null;
 let questionStartedAt = Date.now();
 let wrongTypeFilter: QuestionType | "all" = "all";
+let activeCollectionBankId: string | null = null;
+let activeBankId: string | null = null;
 let bundledBankChecked = false;
 
 const typeLabel: Record<QuestionType, string> = {
@@ -244,18 +246,20 @@ async function recordAttempt(question: Question, selected: string[], textAnswer:
   });
 }
 
-async function startSession(mode: PracticeSession["mode"]): Promise<void> {
+async function startSession(mode: PracticeSession["mode"], bankId?: string, chapter?: string): Promise<void> {
   const state = await getState();
   const questions = await getQuestions();
-  let pool = questions;
+  let pool = bankId ? questions.filter((question) => question.bankId === bankId) : questions;
+  if (chapter) pool = pool.filter((question) => question.chapter === chapter);
 
-  if (mode === "wrong") pool = questions.filter((question) => state.wrongIds.includes(question.id));
-  if (mode === "favorite") pool = questions.filter((question) => state.favoriteIds.includes(question.id));
-  if (mode === "essay") pool = questions.filter((question) => question.type === "essay");
+  if (mode === "wrong") pool = pool.filter((question) => state.wrongIds.includes(question.id));
+  if (mode === "favorite") pool = pool.filter((question) => state.favoriteIds.includes(question.id));
+  if (mode === "essay") pool = pool.filter((question) => question.type === "essay");
   if (mode === "random") pool = shuffle(pool);
 
   if (pool.length === 0) {
-    showToast(mode === "wrong" ? "错题本还没有题目。" : mode === "favorite" ? "收藏夹还没有题目。" : "请先导入题库。");
+    const scope = chapter ? "这个章节" : bankId ? "这个题库" : "";
+    showToast(mode === "wrong" ? `${scope}错题本还没有题目。` : mode === "favorite" ? `${scope}收藏夹还没有题目。` : scope ? `${scope}没有可练习的题目。` : "请先导入题库。");
     return;
   }
 
@@ -263,6 +267,8 @@ async function startSession(mode: PracticeSession["mode"]): Promise<void> {
     mode,
     questionIds: pool.map((question) => question.id),
     index: 0,
+    bankId,
+    chapter,
     startedAt: new Date().toISOString()
   };
 
@@ -326,6 +332,12 @@ async function renderHome(): Promise<void> {
   const todayCount = attempts.filter((attempt) => attempt.createdAt.slice(0, 10) === dateKey()).length;
   const progress = questions.length ? Math.min(100, Math.round((attempts.length / questions.length) * 100)) : 0;
   const lastSession = state.currentSession;
+  const questionsByBank = new Map<string, Question[]>();
+  for (const question of questions) {
+    const list = questionsByBank.get(question.bankId) ?? [];
+    list.push(question);
+    questionsByBank.set(question.bankId, list);
+  }
 
   app.innerHTML = shell(`
     <div class="topbar">
@@ -346,15 +358,15 @@ async function renderHome(): Promise<void> {
       ${
         lastSession
           ? `<button class="primary-button" data-action="resume">继续上次学习 ${lastSession.index + 1}/${lastSession.questionIds.length}</button>`
-          : `<button class="primary-button" data-action="start-sequential">开始刷题</button>`
+          : `<button class="primary-button" data-action="start-sequential">开始全部题库</button>`
       }
       ${questions.length === 0 ? `<button class="secondary-button" data-action="import-bundled" style="margin-top:10px">重新导入内置题库</button>` : ""}
     </section>
 
     <div class="action-grid">
-      <button class="action-card" data-action="start-sequential"><strong>顺序练习</strong><span>按题库顺序推进</span></button>
-      <button class="action-card" data-action="start-random"><strong>随机练习</strong><span>打乱题目顺序</span></button>
-      <button class="action-card" data-action="wrong"><strong>错题本</strong><span>${state.wrongIds.length} 道待巩固</span></button>
+      <button class="action-card" data-action="start-sequential"><strong>全部顺序</strong><span>所有题库一起练</span></button>
+      <button class="action-card" data-action="start-random"><strong>全部随机</strong><span>所有题库打乱练</span></button>
+      <button class="action-card" data-action="wrong"><strong>分题库错题</strong><span>${state.wrongIds.length} 道待巩固</span></button>
       <button class="action-card" data-action="favorite"><strong>收藏夹</strong><span>${state.favoriteIds.length} 道重点题</span></button>
       <button class="action-card" data-action="import"><strong>导入题库</strong><span>JSON / Excel / CSV</span></button>
       <button class="action-card" data-action="stats"><strong>学习统计</strong><span>趋势与正确率</span></button>
@@ -363,14 +375,35 @@ async function renderHome(): Promise<void> {
     </div>
 
     <section class="panel">
-      <strong>最近题库</strong>
-      <div class="list" style="margin-top:10px">
+      <strong>题库列表</strong>
+      <p class="meta">每个题库独立进入，错题也按题库分开查看。</p>
+      <div class="bank-list">
         ${
           banks.length
-            ? banks
-                .slice(-3)
+            ? [...banks]
                 .reverse()
-                .map((bank) => `<div class="row"><div class="row-main"><strong>${escapeHtml(bank.title)}</strong><span class="meta">${bank.count} 道题</span></div></div>`)
+                .map((bank) => {
+                  const bankQuestions = questionsByBank.get(bank.id) ?? [];
+                  const wrongCount = bankQuestions.filter((question) => state.wrongIds.includes(question.id)).length;
+                  const favoriteCount = bankQuestions.filter((question) => state.favoriteIds.includes(question.id)).length;
+                  const essayCount = bankQuestions.filter((question) => question.type === "essay").length;
+                  return `
+                    <div class="bank-card">
+                      <div class="bank-summary">
+                        <div class="row-main">
+                          <strong>${escapeHtml(bank.title)}</strong>
+                          <span class="meta">${bankQuestions.length || bank.count} 道题 · 错题 ${wrongCount} · 收藏 ${favoriteCount} · 解答题 ${essayCount}</span>
+                        </div>
+                      </div>
+                      <div class="bank-actions">
+                        <button class="secondary-button" data-action="bank-chapters" data-id="${bank.id}">章节</button>
+                        <button class="secondary-button" data-action="bank-sequential" data-id="${bank.id}">顺序</button>
+                        <button class="secondary-button" data-action="bank-random" data-id="${bank.id}">随机</button>
+                        <button class="secondary-button" data-action="bank-wrong" data-id="${bank.id}">错题</button>
+                      </div>
+                    </div>
+                  `;
+                })
                 .join("")
             : `<div class="empty">还没有题库。先导入一个 JSON、CSV 或 Excel 文件。</div>`
         }
@@ -411,6 +444,73 @@ async function renderImport(): Promise<void> {
           banks.length
             ? banks.map((bank) => `<div class="row"><div class="row-main"><strong>${escapeHtml(bank.title)}</strong><span class="meta">${bank.count} 道题</span></div></div>`).join("")
             : `<div class="empty">暂无题库。</div>`
+        }
+      </div>
+    </section>
+  `);
+}
+
+async function renderBankDetail(): Promise<void> {
+  if (!activeBankId) {
+    await renderHome();
+    return;
+  }
+
+  const [state, banks, questions] = await Promise.all([getState(), getBanks(), getQuestions()]);
+  const bank = banks.find((item) => item.id === activeBankId);
+  const bankQuestions = questions.filter((question) => question.bankId === activeBankId);
+
+  if (!bank) {
+    activeBankId = null;
+    await renderHome();
+    return;
+  }
+
+  const chapterMap = new Map<string, Question[]>();
+  for (const question of bankQuestions) {
+    const chapter = question.chapter || "未分章节";
+    const list = chapterMap.get(chapter) ?? [];
+    list.push(question);
+    chapterMap.set(chapter, list);
+  }
+  const chapters = [...chapterMap.entries()];
+
+  app.innerHTML = shell(`
+    ${backHeader(bank.title, `${bankQuestions.length} 道题 · ${chapters.length} 个章节`)}
+    <section class="panel">
+      <div class="button-row">
+        <button class="secondary-button" data-action="bank-sequential" data-id="${bank.id}">整本顺序</button>
+        <button class="secondary-button" data-action="bank-random" data-id="${bank.id}">整本随机</button>
+        <button class="secondary-button" data-action="bank-wrong" data-id="${bank.id}">整本错题</button>
+      </div>
+    </section>
+    <section class="panel">
+      <strong>章节列表</strong>
+      <div class="bank-list">
+        ${
+          chapters.length
+            ? chapters
+                .map(([chapter, chapterQuestions]) => {
+                  const wrongCount = chapterQuestions.filter((question) => state.wrongIds.includes(question.id)).length;
+                  const essayCount = chapterQuestions.filter((question) => question.type === "essay").length;
+                  return `
+                    <div class="bank-card">
+                      <div class="bank-summary">
+                        <div class="row-main">
+                          <strong>${escapeHtml(chapter)}</strong>
+                          <span class="meta">${chapterQuestions.length} 道题 · 错题 ${wrongCount} · 解答题 ${essayCount}</span>
+                        </div>
+                      </div>
+                      <div class="bank-actions">
+                        <button class="secondary-button" data-action="chapter-sequential" data-id="${bank.id}" data-chapter="${escapeHtml(chapter)}">顺序</button>
+                        <button class="secondary-button" data-action="chapter-random" data-id="${bank.id}" data-chapter="${escapeHtml(chapter)}">随机</button>
+                        <button class="secondary-button" data-action="chapter-wrong" data-id="${bank.id}" data-chapter="${escapeHtml(chapter)}">错题</button>
+                      </div>
+                    </div>
+                  `;
+                })
+                .join("")
+            : `<div class="empty">这个题库还没有题目。</div>`
         }
       </div>
     </section>
@@ -486,7 +586,7 @@ function renderOption(question: Question, option: string, index: number, current
 }
 
 async function renderPractice(): Promise<void> {
-  const [state] = await Promise.all([getState()]);
+  const [state, banks] = await Promise.all([getState(), getBanks()]);
   const session = state.currentSession;
   if (!session) {
     await renderHome();
@@ -508,9 +608,11 @@ async function renderPractice(): Promise<void> {
   const favorited = state.favoriteIds.includes(question.id);
   const submitted = draft.submitted;
   const objective = question.type !== "essay";
+  const bank = banks.find((item) => item.id === question.bankId);
+  const subtitle = `${bank ? `${bank.title} · ` : ""}${session.index + 1}/${session.questionIds.length} · ${typeLabel[question.type]} · ${question.chapter}`;
 
   app.innerHTML = shell(`
-    ${backHeader("练习", `${session.index + 1}/${session.questionIds.length} · ${typeLabel[question.type]} · ${question.chapter}`)}
+    ${backHeader("练习", subtitle)}
     <section class="panel question-card">
       <div class="question-meta">
         <span>${typeLabel[question.type]}</span>
@@ -657,7 +759,57 @@ async function markEssay(correct: boolean): Promise<void> {
 }
 
 async function renderCollection(kind: "wrong" | "favorite" | "essay"): Promise<void> {
-  const [state, questions] = await Promise.all([getState(), getQuestions()]);
+  const [state, banks, questions] = await Promise.all([getState(), getBanks(), getQuestions()]);
+  const bankMap = new Map(banks.map((bank) => [bank.id, bank]));
+
+  if (kind === "wrong" && !activeCollectionBankId) {
+    const wrongQuestions = questions.filter((question) => state.wrongIds.includes(question.id));
+    const groups = banks
+      .map((bank) => {
+        const bankWrongQuestions = wrongQuestions.filter((question) => question.bankId === bank.id);
+        return { bank, questions: bankWrongQuestions };
+      })
+      .filter((item) => item.questions.length > 0);
+
+    app.innerHTML = shell(`
+      ${backHeader("错题本", `${wrongQuestions.length} 道错题，已按题库分开`)}
+      <section class="panel">
+        <div class="bank-list">
+          ${
+            groups.length
+              ? groups
+                  .map((item) => {
+                    const counts = item.questions.reduce(
+                      (acc, question) => {
+                        acc[question.type] += 1;
+                        return acc;
+                      },
+                      { single: 0, multiple: 0, judge: 0, essay: 0 } as Record<QuestionType, number>
+                    );
+                    return `
+                      <div class="bank-card">
+                        <div class="bank-summary">
+                          <div class="row-main">
+                            <strong>${escapeHtml(item.bank.title)}</strong>
+                            <span class="meta">${item.questions.length} 道错题 · 单选 ${counts.single} · 多选 ${counts.multiple} · 判断 ${counts.judge} · 解答 ${counts.essay}</span>
+                          </div>
+                        </div>
+                        <div class="bank-actions">
+                          <button class="secondary-button" data-action="open-wrong-bank" data-id="${item.bank.id}">查看</button>
+                          <button class="primary-button" data-action="redo-wrong-bank" data-id="${item.bank.id}">重做</button>
+                        </div>
+                      </div>
+                    `;
+                  })
+                  .join("")
+              : `<div class="empty">现在还没有错题。先从某个题库开始练习吧。</div>`
+          }
+        </div>
+      </section>
+    `);
+    return;
+  }
+
   let rows =
     kind === "wrong"
       ? questions.filter((question) => state.wrongIds.includes(question.id))
@@ -665,14 +817,18 @@ async function renderCollection(kind: "wrong" | "favorite" | "essay"): Promise<v
         ? questions.filter((question) => state.favoriteIds.includes(question.id))
         : questions.filter((question) => question.type === "essay");
 
+  if (kind === "wrong" && activeCollectionBankId) rows = rows.filter((question) => question.bankId === activeCollectionBankId);
   if (kind === "wrong" && wrongTypeFilter !== "all") rows = rows.filter((question) => question.type === wrongTypeFilter);
 
   const title = kind === "wrong" ? "错题本" : kind === "favorite" ? "收藏夹" : "解答题专项";
+  const activeBank = activeCollectionBankId ? bankMap.get(activeCollectionBankId) : null;
   app.innerHTML = shell(`
-    ${backHeader(title, `${rows.length} 道题`)}
+    ${backHeader(title, `${activeBank ? `${activeBank.title} · ` : ""}${rows.length} 道题`)}
     ${
       kind === "wrong"
-        ? `<section class="panel"><div class="field"><label for="wrongFilter">按题型筛选</label><select id="wrongFilter" data-action="wrong-filter">
+        ? `<section class="panel">
+          ${activeBank ? `<button class="secondary-button" data-action="wrong">返回错题分组</button>` : ""}
+          <div class="field"><label for="wrongFilter">按题型筛选</label><select id="wrongFilter" data-action="wrong-filter">
             <option value="all">全部题型</option>
             <option value="single">单选题</option>
             <option value="multiple">多选题</option>
@@ -717,12 +873,14 @@ async function renderCollection(kind: "wrong" | "favorite" | "essay"): Promise<v
 
 async function practiceOne(questionId: string): Promise<void> {
   const state = await getState();
+  const question = await getQuestion(questionId);
   await saveState({
     ...state,
     currentSession: {
       mode: "sequential",
       questionIds: [questionId],
       index: 0,
+      bankId: question?.bankId,
       startedAt: new Date().toISOString()
     }
   });
@@ -785,7 +943,11 @@ async function handleClick(event: MouseEvent): Promise<void> {
   const id = target.dataset.id;
   const value = target.dataset.value;
 
-  if (action === "home") setRoute("home");
+  if (action === "home") {
+    activeCollectionBankId = null;
+    activeBankId = null;
+    setRoute("home");
+  }
   if (action === "theme") {
     const state = await getState();
     const nextTheme = document.documentElement.classList.contains("dark") ? "light" : "dark";
@@ -793,15 +955,51 @@ async function handleClick(event: MouseEvent): Promise<void> {
     render();
   }
   if (action === "resume") setRoute("practice");
-  if (action === "import") setRoute("import");
-  if (action === "stats") setRoute("stats");
-  if (action === "wrong") setRoute("wrong");
-  if (action === "favorite") setRoute("favorite");
+  if (action === "import") {
+    activeCollectionBankId = null;
+    activeBankId = null;
+    setRoute("import");
+  }
+  if (action === "stats") {
+    activeCollectionBankId = null;
+    activeBankId = null;
+    setRoute("stats");
+  }
+  if (action === "wrong") {
+    activeCollectionBankId = null;
+    activeBankId = null;
+    setRoute("wrong");
+  }
+  if (action === "favorite") {
+    activeCollectionBankId = null;
+    activeBankId = null;
+    setRoute("favorite");
+  }
   if (action === "start-sequential") startSession("sequential");
   if (action === "start-random") startSession("random");
-  if (action === "start-wrong") startSession("wrong");
+  if (action === "start-wrong") startSession("wrong", activeCollectionBankId ?? undefined);
   if (action === "start-favorite") startSession("favorite");
   if (action === "start-essay") startSession("essay");
+  if (action === "bank-sequential" && id) startSession("sequential", id);
+  if (action === "bank-random" && id) startSession("random", id);
+  if (action === "bank-chapters" && id) {
+    activeBankId = id;
+    setRoute("bank");
+  }
+  if (action === "bank-wrong" && id) {
+    activeCollectionBankId = id;
+    activeBankId = null;
+    setRoute("wrong");
+  }
+  if (action === "open-wrong-bank" && id) {
+    activeCollectionBankId = id;
+    activeBankId = null;
+    setRoute("wrong");
+  }
+  if (action === "redo-wrong-bank" && id) startSession("wrong", id);
+  if (action === "chapter-sequential" && id) startSession("sequential", id, target.dataset.chapter);
+  if (action === "chapter-random" && id) startSession("random", id, target.dataset.chapter);
+  if (action === "chapter-wrong" && id) startSession("wrong", id, target.dataset.chapter);
   if (action === "import-bank") importBank();
   if (action === "import-bundled") {
     const ok = await importBundledBank();
@@ -835,6 +1033,7 @@ async function handleChange(event: Event): Promise<void> {
 async function render(): Promise<void> {
   if (route === "home") await renderHome();
   if (route === "import") await renderImport();
+  if (route === "bank") await renderBankDetail();
   if (route === "practice") await renderPractice();
   if (route === "wrong") await renderCollection("wrong");
   if (route === "favorite") await renderCollection("favorite");

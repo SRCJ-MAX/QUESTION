@@ -227,6 +227,40 @@ button {
   gap: 10px;
 }
 
+.bank-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.bank-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.bank-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bank-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.bank-actions .primary-button,
+.bank-actions .secondary-button {
+  min-height: 44px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
 .row {
   display: flex;
   align-items: center;
@@ -440,6 +474,10 @@ button {
 @media (max-width: 360px) {
   .action-grid,
   .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .bank-actions {
     grid-template-columns: 1fr;
   }
 }
