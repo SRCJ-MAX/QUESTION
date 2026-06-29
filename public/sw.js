@@ -1,11 +1,12 @@
-const CACHE_NAME = self.registration.scope.includes("/girlfriend/") ? "question-pwa-girlfriend-v2" : "question-pwa-v5";
+const CACHE_NAME = self.registration.scope.includes("/girlfriend/") ? "question-pwa-girlfriend-v2" : "question-pwa-v6";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
-  "./data/question-bank.json"
+  "./data/question-bank.json",
+  "./data/mechanical-drawing-bank.json"
 ];
 
 self.addEventListener("install", (event) => {

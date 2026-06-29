@@ -82,73 +82,105 @@ function applyTheme(state: AppState): void {
   document.documentElement.classList.toggle("dark", state.theme === "dark" || (state.theme === "system" && prefersDark));
 }
 
+interface BundledImportSummary {
+  availableBanks: number;
+  importedBanks: number;
+  importedQuestions: number;
+}
+
+function bundledBankPaths(): string[] {
+  return isGirlfriendProfile() ? ["data/question-bank.json"] : ["data/question-bank.json", "data/mechanical-drawing-bank.json"];
+}
+
+function normalizeBankTitle(title: string): string {
+  return title.trim().toLowerCase();
+}
+
 async function ensureBundledBank(): Promise<void> {
   if (bundledBankChecked) return;
   bundledBankChecked = true;
 
-  const banks = await getBanks();
-  if (banks.length > 0) return;
-
-  await importBundledBank();
+  const summary = await importBundledBanks();
+  if (summary.importedBanks > 0) {
+    showToast(`已自动导入 ${summary.importedBanks} 个内置题库，${summary.importedQuestions} 道题。`);
+  }
 }
 
-async function importBundledBank(): Promise<boolean> {
+async function fetchBundledBank(path: string): Promise<{ title?: string; questions?: Array<Partial<Question>> } | null> {
   const candidates = Array.from(
     new Set([
-      `${import.meta.env.BASE_URL}data/question-bank.json`,
-      "./data/question-bank.json",
-      "/QUESTION/data/question-bank.json",
-      `${window.location.origin}/QUESTION/data/question-bank.json`
+      `${import.meta.env.BASE_URL}${path}`,
+      `./${path}`,
+      `/QUESTION/${path}`,
+      `${window.location.origin}/QUESTION/${path}`
     ])
   );
 
-  try {
-    let payload: { title?: string; questions?: Array<Partial<Question>> } | null = null;
-
-    for (const url of candidates) {
+  for (const url of candidates) {
+    try {
       const response = await fetch(`${url}${url.includes("?") ? "&" : "?"}t=${Date.now()}`, { cache: "no-store" });
       if (response.ok) {
-        payload = await response.json();
-        break;
+        return await response.json();
       }
+    } catch {
+      // Try the next candidate path.
+    }
+  }
+
+  return null;
+}
+
+async function importBundledBanks(): Promise<BundledImportSummary> {
+  const existingTitles = new Set((await getBanks()).map((bank) => normalizeBankTitle(bank.title)));
+  const summary: BundledImportSummary = { availableBanks: 0, importedBanks: 0, importedQuestions: 0 };
+
+  try {
+    for (const path of bundledBankPaths()) {
+      const payload = await fetchBundledBank(path);
+      if (!payload?.questions?.length) continue;
+      summary.availableBanks += 1;
+
+      const bankTitle = String(payload.title ?? "习题转换题库").trim() || "习题转换题库";
+      if (existingTitles.has(normalizeBankTitle(bankTitle))) continue;
+
+      const bankId = uid("bank");
+      const now = new Date().toISOString();
+      const questions: Question[] = payload.questions
+        .filter((question) => question.question && question.type)
+        .map((question, index) => ({
+          id: uid(`q${index}`),
+          bankId,
+          type: question.type as QuestionType,
+          question: String(question.question ?? ""),
+          options: Array.isArray(question.options) ? question.options.map(String) : [],
+          answer: Array.isArray(question.answer) ? question.answer.map(String) : question.answer ? [String(question.answer)] : [],
+          analysis: String(question.analysis ?? ""),
+          chapter: String(question.chapter ?? "未分类"),
+          createdAt: now
+        }));
+
+      if (questions.length === 0) continue;
+
+      const result = {
+        bank: {
+          id: bankId,
+          title: bankTitle,
+          count: questions.length,
+          createdAt: now
+        },
+        questions
+      };
+
+      await addBank(result.bank, result.questions);
+      existingTitles.add(normalizeBankTitle(bankTitle));
+      summary.importedBanks += 1;
+      summary.importedQuestions += questions.length;
     }
 
-    if (!payload?.questions?.length) return false;
-
-    const bankId = uid("bank");
-    const now = new Date().toISOString();
-    const questions: Question[] = payload.questions
-      .filter((question) => question.question && question.type)
-      .map((question, index) => ({
-        id: uid(`q${index}`),
-        bankId,
-        type: question.type as QuestionType,
-        question: String(question.question ?? ""),
-        options: Array.isArray(question.options) ? question.options.map(String) : [],
-        answer: Array.isArray(question.answer) ? question.answer.map(String) : question.answer ? [String(question.answer)] : [],
-        analysis: String(question.analysis ?? ""),
-        chapter: String(question.chapter ?? "未分类"),
-        createdAt: now
-      }));
-
-    if (questions.length === 0) return false;
-
-    const result = {
-      bank: {
-        id: bankId,
-        title: payload.title || "习题转换题库",
-        count: questions.length,
-        createdAt: now
-      },
-      questions
-    };
-
-    await addBank(result.bank, result.questions);
-    showToast(`已自动导入内置题库：${result.questions.length} 道题。`);
-    return true;
+    return summary;
   } catch {
-    // 内置题库导入失败时保持空状态，用户仍可手动导入自己的题库。
-    return false;
+    // 内置题库导入失败时保持现有数据，用户仍可手动导入自己的题库。
+    return summary;
   }
 }
 
@@ -1002,8 +1034,14 @@ async function handleClick(event: MouseEvent): Promise<void> {
   if (action === "chapter-wrong" && id) startSession("wrong", id, target.dataset.chapter);
   if (action === "import-bank") importBank();
   if (action === "import-bundled") {
-    const ok = await importBundledBank();
-    showToast(ok ? "内置题库已导入。" : "内置题库加载失败，请刷新后重试。");
+    const summary = await importBundledBanks();
+    showToast(
+      summary.importedBanks > 0
+        ? `已导入 ${summary.importedBanks} 个内置题库，${summary.importedQuestions} 道题。`
+        : summary.availableBanks > 0
+          ? "内置题库已是最新。"
+          : "内置题库加载失败，请刷新后重试。"
+    );
     render();
   }
   if (action === "export-all") exportAll(false);
